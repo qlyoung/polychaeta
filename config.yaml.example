@@ -1,0 +1,2 @@
+gh_webhook_secret: <secret>
+gh_auth_token: <auth> 
