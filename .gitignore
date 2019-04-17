@@ -1,6 +1,9 @@
 # config file
 config.yaml
 
+# job store
+jobs.sqlite
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

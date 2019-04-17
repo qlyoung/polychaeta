@@ -1,19 +1,34 @@
 #!/usr/bin/env python3
 #
 # Deps:
-# pip3 install flask PyGithub apscheduler
+# pip3 install flask PyGithub apscheduler sqlalchemy
 #
 from flask import Flask
 from flask import request
 from flask import Response
 from github import Github
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 import datetime
 import json
 import hmac
 from hmac import HMAC
 import os
 import yaml
+
+# Global data
+autoclosemsg = "This issue will be automatically closed in one week unless there is further activity."
+noautoclosemsg = "This issue will no longer be automatically closed."
+triggerlabel = "autoclose"
+
+# Scheduler functions
+def close_issue(rn, num):
+    app.logger.warning("Closing issue #{}".format(num))
+    repo = g.get_repo(rn)
+    issu = repo.get_issue(num)
+    issu.edit(state="closed")
+    issu.remove_from_labels(triggerlabel)
+
 
 print("[+] Loading config")
 
@@ -25,29 +40,21 @@ with open("config.yaml", "r") as conffile:
 print("[+] Github auth token: {}".format(auth))
 print("[+] Github webhook secret: {}".format(whsec))
 
-autoclosemsg = "This issue will be automatically closed in one week unless there is further activity."
-noautoclosemsg = "This issue will no longer be automatically closed."
-triggerlabel = "autoclose"
-
 # Initialize GitHub API
 g = Github(auth)
 print("[+] Initialized GitHub API object")
 
 # Initialize scheduler
-scheduler = BackgroundScheduler()
+jobstores = {"default": SQLAlchemyJobStore(url="sqlite:///jobs.sqlite")}
+scheduler = BackgroundScheduler(jobstores=jobstores)
 scheduler.start()
+print("[+] Initialized scheduler")
+print("[+] Current jobs:")
+scheduler.print_jobs()
 
 # Initialize Flask app
 app = Flask(__name__)
 print("[+] Initialized Flask app")
-
-
-def close_issue(rn, num):
-    app.logger.warning("Closing issue #{}".format(num))
-    repo = g.get_repo(rn)
-    issu = repo.get_issue(num)
-    issu.edit(state="closed")
-    issu.remove_from_labels(triggerlabel)
 
 
 def gh_sig_valid(req):
