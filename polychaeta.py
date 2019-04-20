@@ -3,16 +3,16 @@
 # Deps:
 # pip3 install flask PyGithub apscheduler sqlalchemy
 #
-from flask import Flask
-from flask import request
-from flask import Response
-from github import Github
-from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
-import datetime
-import json
-import hmac
+from apscheduler.schedulers.background import BackgroundScheduler
+from flask import Flask
+from flask import Response
+from flask import request
+from github import Github
 from hmac import HMAC
+import datetime
+import hmac
+import json
 import os
 import yaml
 
