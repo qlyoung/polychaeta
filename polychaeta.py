@@ -25,9 +25,9 @@ triggerlabel = "autoclose"
 def close_issue(rn, num):
     app.logger.warning("Closing issue #{}".format(num))
     repo = g.get_repo(rn)
-    issu = repo.get_issue(num)
-    issu.edit(state="closed")
-    issu.remove_from_labels(triggerlabel)
+    issue = repo.get_issue(num)
+    issue.edit(state="closed")
+    issue.remove_from_labels(triggerlabel)
 
 
 print("[+] Loading config")
