@@ -10,16 +10,25 @@ from flask import Response
 from flask import request
 from github import Github
 from hmac import HMAC
+from werkzeug.exceptions import BadRequest
 import datetime
 import hmac
 import json
 import os
+import re
 import yaml
 
 # Global data ------------------------------------------------------------------
 autoclosemsg = "This issue will be automatically closed in one week unless there is further activity."
 noautoclosemsg = "This issue will no longer be automatically closed."
 triggerlabel = "autoclose"
+
+pr_greeting_msg = "Thanks for your contribution to FRR!\n\n"
+pr_warn_signoff_msg = "* One of your commits is missing a `Signed-off-by` line; we can't accept your contribution until all of your commits have one\n"
+pr_warn_commit_msg = (
+    "* One of your commits has an improperly formatted commit message\n"
+)
+pr_guidelines_ref_msg = "\nIf you are a new contributor to FRR, please see our [contributing guidelines](http://docs.frrouting.org/projects/dev-guide/en/latest/workflow.html#coding-practices-style).\n"
 
 # Scheduler functions ----------------------------------------------------------
 
@@ -66,7 +75,6 @@ print("[+] Initialized Flask app")
 def issue_labeled(j):
     reponame = j["repository"]["full_name"]
     issuenum = j["issue"]["number"]
-    action = j["action"]
 
     issueid = "{}@@@{}".format(reponame, issuenum)
     repo = g.get_repo(reponame)
@@ -87,27 +95,9 @@ def issue_labeled(j):
     return Response("OK", 200)
 
 
-def handle_issues(j):
-    issue_actions = {"labeled": issue_labeled}
-    reponame = j["repository"]["full_name"]
-    issuenum = j["issue"]["number"]
-    action = j["action"]
-    app.logger.warning("Repo: {}".format(reponame))
-    app.logger.warning("Action: {}".format(action))
-    app.logger.warning("Issue: {}".format(issuenum))
-
-    if action in issue_actions:
-        return issue_actions[action](j)
-    else:
-        app.logger.warning("Unknown issue action: {}".format(action))
-
-    return Response("OK", 200)
-
-
 def issue_comment_created(j):
     reponame = j["repository"]["full_name"]
     issuenum = j["issue"]["number"]
-    action = j["action"]
 
     issueid = "{}@@@{}".format(reponame, issuenum)
     repo = g.get_repo(reponame)
@@ -123,39 +113,97 @@ def issue_comment_created(j):
     return Response("OK", 200)
 
 
-def handle_issue_comment(j):
-    issue_comment_actions = {"created": issue_comment_created}
+def pull_request_opened(j):
+    # Check each of the commits for the following:
+    #
+    # - Signed-off-by line
+    # - Summary line format
     reponame = j["repository"]["full_name"]
-    issuenum = j["issue"]["number"]
-    action = j["action"]
-    app.logger.warning("Repo: {}".format(reponame))
-    app.logger.warning("Action: {}".format(action))
-    app.logger.warning("Issue: {}".format(issuenum))
 
-    if action in issue_comment_actions:
-        return issue_comment_actions[action](j)
-    else:
-        app.logger.warning("Unknown issue_comment action: {}".format(action))
+    repo = g.get_repo(reponame)
+    pr = repo.get_pull(j["number"])
+    commits = pr.get_commits()
+
+    warn_bad_msg = False
+    warn_signoff = False
+
+    for commit in commits:
+        msg = commit.commit.message
+
+        if msg.startswith("Revert") or msg.startswith("Merge"):
+            continue
+
+        if not re.match(r"^[^:\n]+:", msg):
+            warn_bad_msg = True
+
+        if not "Signed-off-by:" in msg:
+            warn_signoff = True
+
+    if warn_bad_msg or warn_signoff:
+        comment = pr_greeting_msg
+        comment += pr_warn_commit_msg if warn_bad_msg else ""
+        comment += pr_warn_signoff_msg if warn_signoff else ""
+        comment += pr_guidelines_ref_msg
+        pr.create_review(body=comment, event="REQUEST_CHANGES")
 
     return Response("OK", 200)
+
+
+# API handler map
+# {
+#   'event1': {
+#     'action1': ev1_action1_handler,
+#     'action2': ev1_action2_handler,
+#     ...
+#   }
+#   'event2': {
+#     'action1': ev2_action1_handler,
+#     'action2': ev2_action2_handler,
+#     ...
+#   }
+# }
+event_handlers = {
+    "issues": {"labeled": issue_labeled},
+    "issue_comment": {"created": issue_comment_created},
+    "pull_request": {"opened": pull_request_opened},
+}
 
 
 def handle_webhook(request):
-    hooks = {"issues": handle_issues, "issue_comment": handle_issue_comment}
-    evtype = request.headers["X_GITHUB_EVENT"]
+    try:
+        evtype = request.headers["X_GITHUB_EVENT"]
+    except KeyError as e:
+        app.logger.warning("No X-GitHub-Event header...")
+        return Response("No X-GitHub-Event header", 400)
 
-    app.logger.warning("Handling webhook: {}".format(evtype))
+    app.logger.warning("Handling webhook '{}'".format(evtype))
 
-    if evtype in hooks:
+    try:
+        event = event_handlers[evtype]
+    except KeyError as e:
+        app.logger.warning("Unknown event '{}'".format(evtype))
+        return Response("OK", 200)
+
+    try:
         j = request.get_json(silent=True)
-        if not j:
-            app.logger.warning("Could not parse payload as JSON")
-            return Response("Bad JSON", 500)
-        return hooks[evtype](j)
-    else:
-        app.logger.warning("Unknown event type: {}".format(evtype))
+    except BadRequest as e:
+        app.logger.warning("Could not parse payload as JSON")
+        return Response("Bad JSON", 400)
 
-    return Response("OK", 200)
+    try:
+        action = j["action"]
+    except KeyError as e:
+        app.logger.warning("No action for event '{}'".format(evtype))
+        return Response("OK", 200)
+
+    try:
+        handler = event_handlers[evtype][action]
+    except KeyError as e:
+        app.logger.warning("No handler for action '{}'".format(action))
+        return Response("OK", 200)
+
+    app.logger.warning("Handling action '{}' on event '{}'".format(action, evtype))
+    return handler(j)
 
 
 # Flask hooks ------------------------------------------------------------------
