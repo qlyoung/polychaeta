@@ -185,7 +185,7 @@ def handle_webhook(request):
         return Response("OK", 200)
 
     try:
-        j = request.get_json(silent=True)
+        j = request.get_json()
     except BadRequest as e:
         app.logger.warning("Could not parse payload as JSON")
         return Response("Bad JSON", 400)
