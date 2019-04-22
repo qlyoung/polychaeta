@@ -114,10 +114,17 @@ def issue_comment_created(j):
 
 
 def pull_request_opened(j):
-    # Check each of the commits for the following:
-    #
-    # - Signed-off-by line
-    # - Summary line format
+    """
+    Handle a pull request being opened.
+
+    This function checks each commit's message for proper summary line
+    formatting, Signed-off-by, and modified directories. If it finds formatting
+    issues or missing Signed-off-by, it leaves a review on the PR asking for
+    the problem to be fixed.
+
+    Also, modified directories are extracted from commits and used to apply the
+    corresponding topic labels.
+    """
     reponame = j["repository"]["full_name"]
 
     repo = g.get_repo(reponame)
@@ -126,6 +133,47 @@ def pull_request_opened(j):
 
     warn_bad_msg = False
     warn_signoff = False
+    labels = set()
+
+    # apply labels based on commit messages
+    label_map = {
+        "babeld": "babel",
+        "bfdd": "bfd",
+        "bgpd": "bgp",
+        "debian": "packaging",
+        "doc": "documentation",
+        "docker": "docker",
+        "eigrpd": "eigrp",
+        "fpm": "fpm",
+        "isisd": "isis",
+        "ldpd": "ldp",
+        "lib": "libfrr",
+        "nhrpd": "nhrp",
+        "ospf6d": "ospfv3",
+        "ospfd": "ospf",
+        "pbrd": "pbr",
+        "pimd": "pim",
+        "pkgsrc": "packaging",
+        "python": "clippy",
+        "redhat": "packaging",
+        "ripd": "rip",
+        "ripngd": "ripng",
+        "sharpd": "sharp",
+        "snapcraft": "packaging",
+        "solaris": "packaging",
+        "staticd": "staticd",
+        "tests": "tests",
+        "tools": "tools",
+        "vtysh": "vtysh",
+        "vrrp": "vrrp",
+        "watchfrr": "watchfrr",
+        "yang": "yang",
+        "zebra": "zebra",
+        # files
+        "configure.ac": "build",
+        "Makefile.am": "build",
+        "bootstrap.sh": "build",
+    }
 
     for commit in commits:
         msg = commit.commit.message
@@ -133,7 +181,13 @@ def pull_request_opened(j):
         if msg.startswith("Revert") or msg.startswith("Merge"):
             continue
 
-        if not re.match(r"^[^:\n]+:", msg):
+        match = re.match(r"^([^:\n]+):", msg)
+        if match:
+            lbls = map(lambda x: x.strip(), match.groups()[0].split(","))
+            lbls = filter(lambda x: x in label_map, lbls)
+            lbls = set(map(lambda x: label_map[x], lbls))
+            labels = labels | lbls
+        else:
             warn_bad_msg = True
 
         if not "Signed-off-by:" in msg:
@@ -145,6 +199,9 @@ def pull_request_opened(j):
         comment += pr_warn_signoff_msg if warn_signoff else ""
         comment += pr_guidelines_ref_msg
         pr.create_review(body=comment, event="REQUEST_CHANGES")
+
+    if labels:
+        pr.set_labels(*labels)
 
     return Response("OK", 200)
 
