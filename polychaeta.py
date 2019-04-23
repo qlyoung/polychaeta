@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 #
 # Deps:
-# pip3 install flask PyGithub apscheduler sqlalchemy
+# pip3 install flask PyGithub apscheduler sqlalchemy dateparser
 #
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -9,8 +9,10 @@ from flask import Flask
 from flask import Response
 from flask import request
 from github import Github
+from github import GithubException
 from hmac import HMAC
 from werkzeug.exceptions import BadRequest
+import dateparser
 import datetime
 import hmac
 import json
@@ -38,7 +40,45 @@ def close_issue(rn, num):
     repo = g.get_repo(rn)
     issue = repo.get_issue(num)
     issue.edit(state="closed")
-    issue.remove_from_labels(triggerlabel)
+    try:
+        issue.remove_from_labels(triggerlabel)
+    except GithubException as e:
+        pass
+
+
+def schedule_close_issue(issue, when):
+    """
+    Schedule an issue to be automatically closed on a certain date.
+
+    :param github.Issue.Issue issue: issue to close
+    :param datetime.datetime when: When to close the issue
+    """
+    reponame = issue.repository.full_name
+    issuenum = issue.number
+    issueid = "{}@@@{}".format(reponame, issuenum)
+    app.logger.warning(
+        "[-] Scheduling issue #{} for autoclose (id: {})".format(issuenum, issueid)
+    )
+    scheduler.add_job(
+        close_issue,
+        run_date=when,
+        args=[reponame, issuenum],
+        id=issueid,
+        replace_existing=True,
+    )
+
+
+def cancel_close_issue(issue):
+    """
+    Dechedule an issue to be automatically closed on a certain date.
+
+    :param github.Issue.Issue issue: issue to cancel
+    """
+    reponame = issue.repository.full_name
+    issuenum = issue.id
+    issueid = "{}@@@{}".format(reponame, issuenum)
+    app.logger.warning("[-] Descheduling issue #{} for closing".format(issuenum))
+    scheduler.remove_job(issueid)
 
 
 # Module init ------------------------------------------------------------------
@@ -55,6 +95,7 @@ print("[+] Github webhook secret: {}".format(whsec))
 
 # Initialize GitHub API
 g = Github(auth)
+my_user = g.get_user().login
 print("[+] Initialized GitHub API object")
 
 # Initialize scheduler
@@ -76,20 +117,12 @@ def issue_labeled(j):
     reponame = j["repository"]["full_name"]
     issuenum = j["issue"]["number"]
 
-    issueid = "{}@@@{}".format(reponame, issuenum)
     repo = g.get_repo(reponame)
     issue = repo.get_issue(issuenum)
 
     if j["label"]["name"] == triggerlabel:
         closedate = datetime.datetime.now() + datetime.timedelta(weeks=1)
-        scheduler.add_job(
-            close_issue,
-            run_date=closedate,
-            args=[reponame, issuenum],
-            id=issueid,
-            replace_existing=True,
-        )
-        app.logger.warning("[-] Issue {} scheduled for closing".format(issueid))
+        schedule_close_issue(issue, closedate)
         issue.create_comment(autoclosemsg)
 
     return Response("OK", 200)
@@ -103,10 +136,23 @@ def issue_comment_created(j):
     repo = g.get_repo(reponame)
     issue = repo.get_issue(issuenum)
 
-    if j["comment"]["body"] != autoclosemsg and scheduler.get_job(issueid) is not None:
-        app.logger.warning("[-] Descheduling issue {} for closing".format(issueid))
+    # decide if this comment is directed at us
+    body = j["comment"]["body"]
+    sender = j["sender"]["login"]
+    perm = repo.get_collaborator_permission(sender)
+    trigger = "@{} autoclose".format(my_user)
+
+    app.logger.warning("Trigger: {}".format(trigger))
+    app.logger.warning("Perm: {}".format(perm))
+
+    if trigger.lower() in body.lower() and perm == "admin":
+        closedate = dateparser.parse(body.partition("autoclose")[2])
+        if closedate is not None and closedate > datetime.datetime.now():
+            schedule_close_issue(issue, closedate)
+            issue.add_to_labels("autoclose")
+            issue.get_comment(j["comment"]["id"]).create_reaction("+1")
+    elif scheduler.get_job(issueid) is not None:
         scheduler.remove_job(issueid)
-        app.logger.warning("[-] Issue {} descheduled for closing".format(issueid))
         issue.remove_from_labels(triggerlabel)
         issue.create_comment(noautoclosemsg)
 
@@ -258,6 +304,17 @@ def handle_webhook(request):
     except KeyError as e:
         app.logger.warning("No handler for action '{}'".format(action))
         return Response("OK", 200)
+
+    try:
+        sender = j["sender"]["login"]
+        reponame = j["repository"]["full_name"]
+        repo = g.get_repo(reponame)
+        perm = repo.get_collaborator_permission(sender)
+        if sender == my_user:
+            app.logger.warning("[-] Ignoring event triggered by me")
+            return Response("OK", 200)
+    except KeyError as e:
+        pass
 
     app.logger.warning("Handling action '{}' on event '{}'".format(action, evtype))
     return handler(j)
