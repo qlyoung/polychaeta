@@ -309,7 +309,6 @@ def handle_webhook(request):
         sender = j["sender"]["login"]
         reponame = j["repository"]["full_name"]
         repo = g.get_repo(reponame)
-        perm = repo.get_collaborator_permission(sender)
         if sender == my_user:
             app.logger.warning("[-] Ignoring event triggered by me")
             return Response("OK", 200)
