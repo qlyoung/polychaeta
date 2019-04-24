@@ -217,7 +217,7 @@ def pull_request_opened(j):
         "zebra": "zebra",
         # files
         "configure.ac": "build",
-        "Makefile.am": "build",
+        "makefile.am": "build",
         "bootstrap.sh": "build",
     }
 
@@ -230,8 +230,10 @@ def pull_request_opened(j):
         match = re.match(r"^([^:\n]+):", msg)
         if match:
             lbls = map(lambda x: x.strip(), match.groups()[0].split(","))
+            lbls = map(lambda x: x.lower(), lbls)
             lbls = filter(lambda x: x in label_map, lbls)
-            lbls = set(map(lambda x: label_map[x], lbls))
+            lbls = map(lambda x: label_map[x], lbls)
+            lbls = set(lbls)
             labels = labels | lbls
         else:
             warn_bad_msg = True
