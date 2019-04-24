@@ -36,7 +36,7 @@ pr_guidelines_ref_msg = "\nIf you are a new contributor to FRR, please see our [
 
 
 def close_issue(rn, num):
-    app.logger.warning("Closing issue #{}".format(num))
+    app.logger.warning("[+] Closing issue #{}".format(num))
     repo = g.get_repo(rn)
     issue = repo.get_issue(num)
     issue.edit(state="closed")
@@ -116,42 +116,91 @@ print("[+] Initialized Flask app")
 def issue_labeled(j):
     reponame = j["repository"]["full_name"]
     issuenum = j["issue"]["number"]
+    issue = g.get_repo(reponame).get_issue(issuenum)
 
-    repo = g.get_repo(reponame)
-    issue = repo.get_issue(issuenum)
-
-    if j["label"]["name"] == triggerlabel:
+    def label_autoclose():
         closedate = datetime.datetime.now() + datetime.timedelta(weeks=1)
         schedule_close_issue(issue, closedate)
         issue.create_comment(autoclosemsg)
+
+    label_actions = {"autoclose": label_autoclose}
+
+    try:
+        labelname = j["label"]["name"]
+        label_actions[labelname]()
+    except KeyError:
+        pass
 
     return Response("OK", 200)
 
 
 def issue_comment_created(j):
+    """
+    Handle an issue comment being created.
+
+    First we check if the comment contains a trigger phrase. If it does, and
+    the user who made the comment has admin privileges on the repository, we
+    then try to parse the trigger phrase and its arguments and take the
+    specified action. If the action fails to parse nothing is done.
+
+    If the comment doesn't contain a trigger phrase, and this issue is
+    scheduled for autoclose, then we'll consider the comment to be activity on
+    the issue and cancel the autoclose.
+
+    Trigger phrases are of the form '@<botusername> <verb> <arguments>.
+
+    Current verbs:
+
+    autoclose <time period>
+       Automatically close this issue in <time period>.
+    """
+
     reponame = j["repository"]["full_name"]
     issuenum = j["issue"]["number"]
 
-    issueid = "{}@@@{}".format(reponame, issuenum)
     repo = g.get_repo(reponame)
     issue = repo.get_issue(issuenum)
 
-    # decide if this comment is directed at us
     body = j["comment"]["body"]
     sender = j["sender"]["login"]
     perm = repo.get_collaborator_permission(sender)
-    trigger = "@{} autoclose".format(my_user)
 
-    app.logger.warning("Trigger: {}".format(trigger))
-    app.logger.warning("Perm: {}".format(perm))
+    def verb_autoclose(arg):
+        """
+        Verb to automatically close an issue after a certain period of time.
 
-    if trigger.lower() in body.lower() and perm == "admin":
-        closedate = dateparser.parse(body.partition("autoclose")[2])
+        :param tp str: trigger phrase
+        :param arg str: automatically close this issue in <arg>, where <arg> is
+        a time period in the future or a date. For instance, time period could
+        be "in 1 day" to close the issue in 1 day, or "May 25th" to specify the
+        next occurring May 15th.
+        """
+        if perm != "admin":
+            app.logger.warning("[-] User '{}' ({}) isn't authorized to use this command".format(sender, perm))
+            return
+
+        closedate = dateparser.parse(arg)
         if closedate is not None and closedate > datetime.datetime.now():
             schedule_close_issue(issue, closedate)
             issue.add_to_labels("autoclose")
             issue.get_comment(j["comment"]["id"]).create_reaction("+1")
-    elif scheduler.get_job(issueid) is not None:
+        elif closedate is None:
+            app.logger.warning("[-] Couldn't parse '{}' as a datetime".format(arg))
+
+    verbs = {"autoclose": verb_autoclose}
+
+    had_verb = False
+
+    for verb in verbs.keys():
+        tp = "@{} {} ".format(my_user, verb)
+        if tp.lower() in body.lower():
+            partition = body.lower().partition(tp.lower())
+            app.logger.warning("[+] Trigger detected: {} {}".format(partition[1], partition[2]))
+            verbs[verb](partition[2])
+            had_verb = True
+
+    issueid = "{}@@@{}".format(reponame, issuenum)
+    if not had_verb and scheduler.get_job(issueid) is not None:
         scheduler.remove_job(issueid)
         issue.remove_from_labels(triggerlabel)
         issue.create_comment(noautoclosemsg)
@@ -278,33 +327,33 @@ def handle_webhook(request):
     try:
         evtype = request.headers["X_GITHUB_EVENT"]
     except KeyError as e:
-        app.logger.warning("No X-GitHub-Event header...")
+        app.logger.warning("[-] No X-GitHub-Event header...")
         return Response("No X-GitHub-Event header", 400)
 
-    app.logger.warning("Handling webhook '{}'".format(evtype))
+    app.logger.warning("[+] Handling webhook '{}'".format(evtype))
 
     try:
         event = event_handlers[evtype]
     except KeyError as e:
-        app.logger.warning("Unknown event '{}'".format(evtype))
+        app.logger.warning("[+] Unknown event '{}'".format(evtype))
         return Response("OK", 200)
 
     try:
         j = request.get_json()
     except BadRequest as e:
-        app.logger.warning("Could not parse payload as JSON")
+        app.logger.warning("[-] Could not parse payload as JSON")
         return Response("Bad JSON", 400)
 
     try:
         action = j["action"]
     except KeyError as e:
-        app.logger.warning("No action for event '{}'".format(evtype))
+        app.logger.warning("[+] No action for event '{}'".format(evtype))
         return Response("OK", 200)
 
     try:
         handler = event_handlers[evtype][action]
     except KeyError as e:
-        app.logger.warning("No handler for action '{}'".format(action))
+        app.logger.warning("[+] No handler for action '{}'".format(action))
         return Response("OK", 200)
 
     try:
@@ -312,12 +361,12 @@ def handle_webhook(request):
         reponame = j["repository"]["full_name"]
         repo = g.get_repo(reponame)
         if sender == my_user:
-            app.logger.warning("[-] Ignoring event triggered by me")
+            app.logger.warning("[+] Ignoring event triggered by me")
             return Response("OK", 200)
     except KeyError as e:
         pass
 
-    app.logger.warning("Handling action '{}' on event '{}'".format(action, evtype))
+    app.logger.warning("[+] Handling action '{}' on event '{}'".format(action, evtype))
     return handler(j)
 
 
@@ -328,7 +377,7 @@ def gh_sig_valid(req):
     mydigest = "sha1=" + HMAC(bytes(whsec, "utf8"), req.get_data(), "sha1").hexdigest()
     ghdigest = req.headers["X_HUB_SIGNATURE"]
     comp = hmac.compare_digest(ghdigest, mydigest)
-    app.logger.warning("Request: mine = {}, theirs = {}".format(mydigest, ghdigest))
+    app.logger.warning("[+] Request: mine = {}, theirs = {}".format(mydigest, ghdigest))
     return comp
 
 
@@ -339,8 +388,6 @@ def parse_payload():
             return Response("Unauthorized", 401)
     except:
         return Response("Unauthorized", 401)
-
-    app.logger.warning("Got {}".format(request.method))
 
     if request.method == "POST":
         return handle_webhook(request)
