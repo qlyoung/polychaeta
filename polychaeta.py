@@ -381,7 +381,7 @@ def gh_sig_valid(req):
     return comp
 
 
-@app.route("/payload", methods=["GET", "POST"])
+@app.route("/", methods=["GET", "POST"])
 def parse_payload():
     try:
         if not gh_sig_valid(request):
