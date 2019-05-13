@@ -1,4 +1,4 @@
 #!/bin/bash
 
-uwsgi -s /tmp/polychaeta.sock --manage-script-name --enable-threads --mount /polychaeta=polychaeta:app
-sudo chmod o+w /tmp/polychaeta.sock
+uwsgi -s /tmp/frrbot.sock --manage-script-name --enable-threads --mount /frrbot=frrbot:app
+sudo chmod o+w /tmp/frrbot.sock
