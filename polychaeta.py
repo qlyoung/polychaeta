@@ -27,6 +27,7 @@ triggerlabel = "autoclose"
 
 pr_greeting_msg = "Thanks for your contribution to FRR!\n\n"
 pr_warn_signoff_msg = "* One of your commits is missing a `Signed-off-by` line; we can't accept your contribution until all of your commits have one\n"
+pr_warn_blankln_msg = "* One of your commits does not have a blank line between the summary and body; this will break `git log --oneline`\n"
 pr_warn_commit_msg = (
     "* One of your commits has an improperly formatted commit message\n"
 )
@@ -226,8 +227,6 @@ def pull_request_opened(j):
     pr = repo.get_pull(j["number"])
     commits = pr.get_commits()
 
-    warn_bad_msg = False
-    warn_signoff = False
     labels = set()
 
     # apply labels based on commit messages
@@ -270,11 +269,18 @@ def pull_request_opened(j):
         "bootstrap.sh": "build",
     }
 
+    warn_bad_msg = False
+    warn_signoff = False
+    warn_blankln = False
+
     for commit in commits:
         msg = commit.commit.message
 
         if msg.startswith("Revert") or msg.startswith("Merge"):
             continue
+
+        if len(msg.split('\n')) < 2 or len(msg.split('\n')[1]) > 0:
+            warn_blankln = True
 
         match = re.match(r"^([^:\n]+):", msg)
         if match:
@@ -290,15 +296,16 @@ def pull_request_opened(j):
         if not "Signed-off-by:" in msg:
             warn_signoff = True
 
-    if warn_bad_msg or warn_signoff:
+    if warn_bad_msg or warn_signoff or warn_blankln:
         comment = pr_greeting_msg
         comment += pr_warn_commit_msg if warn_bad_msg else ""
         comment += pr_warn_signoff_msg if warn_signoff else ""
+        comment += pr_warn_blankln_msg if warn_blankln else ""
         comment += pr_guidelines_ref_msg
         pr.create_review(body=comment, event="REQUEST_CHANGES")
 
     if labels:
-        pr.set_labels(*labels)
+        pr.add_to_labels(*labels)
 
     return Response("OK", 200)
 
