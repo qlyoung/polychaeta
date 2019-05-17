@@ -259,7 +259,7 @@ def pull_request_opened(j):
         "tests": "tests",
         "tools": "tools",
         "vtysh": "vtysh",
-        "vrrp": "vrrp",
+        "vrrpd": "vrrp",
         "watchfrr": "watchfrr",
         "yang": "yang",
         "zebra": "zebra",
