@@ -1,7 +1,7 @@
-frrbot
-======
+polychaeta
+==========
 
-A GitHub bot for managing the FRRouting/frr repo.
+A GitHub bot for basic issue management tasks.
 
 Usage
 -----
@@ -15,12 +15,12 @@ Usage
 
 *Option 1: `flask run`*
 
-- Set environment variable `FLASK_APP=frrbot.py`
+- Set environment variable `FLASK_APP=polychaeta.py`
 - Execute `flask run`
 - Configure your web server of choice to proxy your payload URL to
   `http://localhost:5000/` and reload it
 
 *Option 2: WSGI*
 
-- Use `./run.sh` to create and mount a WSGI endpoint on /frrbot and
+- Use `./run.sh` to create and mount a WSGI endpoint on /polychaeta and
   configure your web server to WSGI proxy your pyaload URL to it.
