@@ -176,7 +176,7 @@ def issue_comment_created(j):
         be "in 1 day" to close the issue in 1 day, or "May 25th" to specify the
         next occurring May 15th.
         """
-        if perm != "write" or perm != "admin":
+        if not (perm == "write" or perm == "admin"):
             app.logger.warning("[-] User '{}' ({}) isn't authorized to use this command".format(sender, perm))
             return
 
